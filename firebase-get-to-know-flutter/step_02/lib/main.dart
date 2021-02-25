@@ -53,7 +53,6 @@ class HomePage extends StatelessWidget {
           SizedBox(height: 8),
           IconAndDetail(Icons.calendar_today, 'October 30'),
           IconAndDetail(Icons.location_city, 'San Francisco'),
-          // Add from here
           Consumer<ApplicationState>(
             builder: (context, appState, _) => Authentication(
               email: appState.email,
@@ -66,7 +65,6 @@ class HomePage extends StatelessWidget {
               signOut: appState.signOut,
             ),
           ),
-          // to here
           Divider(
             height: 8,
             thickness: 1,
@@ -82,14 +80,28 @@ class HomePage extends StatelessWidget {
             builder: (context, appState, _) => Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Add from here
+                if (appState.attendees >= 2)
+                  Paragraph('${appState.attendees} people going')
+                else if (appState.attendees == 1)
+                  Paragraph('1 person going')
+                else
+                  Paragraph('No one going'),
+                // To here.
                 if (appState.loginState == ApplicationLoginState.loggedIn) ...[
+                  // Add from here
+                  YesNoSelection(
+                    state: appState.attending,
+                    onSelection: (attending) => appState.attending = attending,
+                  ),
+                  // To here.
                   Header('Discussion'),
                   GuestBook(
                     addMessage: (String message) =>
                         appState.addMessageToGuestBook(message),
                     messages: appState.guestBookMessages,
                   ),
-                ]
+                ],
               ],
             ),
           ),
@@ -98,6 +110,7 @@ class HomePage extends StatelessWidget {
     );
   }
 }
+
 class ApplicationState extends ChangeNotifier {
   ApplicationState() {
     init();
@@ -105,7 +118,14 @@ class ApplicationState extends ChangeNotifier {
 
   Future<void> init() async {
     await Firebase.initializeApp();
-
+    FirebaseFirestore.instance
+        .collection('attendees')
+        .where('attending', isEqualTo: true)
+        .snapshots()
+        .listen((snapshot) {
+      _attendees = snapshot.docs.length;
+      notifyListeners();
+    });
     FirebaseAuth.instance.userChanges().listen((user) {
       if (user != null) {
         _loginState = ApplicationLoginState.loggedIn;
@@ -125,10 +145,27 @@ class ApplicationState extends ChangeNotifier {
           });
           notifyListeners();
         });
+        _attendingSubscription = FirebaseFirestore.instance
+            .collection('attendees')
+            .doc(user.uid)
+            .snapshots()
+            .listen((snapshot) {
+          if (snapshot.data() != null) {
+            if (snapshot.data()['attending']) {
+              _attending = Attending.yes;
+            } else {
+              _attending = Attending.no;
+            }
+          } else {
+            _attending = Attending.unknown;
+          }
+          notifyListeners();
+        });
       } else {
         _loginState = ApplicationLoginState.loggedOut;
         _guestBookMessages = [];
         _guestBookSubscription?.cancel();
+        _attendingSubscription?.cancel();
       }
       notifyListeners();
     });
@@ -145,6 +182,22 @@ class ApplicationState extends ChangeNotifier {
   List<GuestBookMessage> _guestBookMessages = [];
   List<GuestBookMessage> get guestBookMessages => _guestBookMessages;
 
+  int _attendees = 0;
+  int get attendees => _attendees;
+
+  Attending _attending = Attending.unknown;
+  StreamSubscription<DocumentSnapshot> _attendingSubscription;
+  Attending get attending => _attending;
+  set attending(Attending attending) {
+    final userDoc = FirebaseFirestore.instance
+        .collection('attendees')
+        .doc(FirebaseAuth.instance.currentUser.uid);
+    if (attending == Attending.yes) {
+      userDoc.set({'attending': true});
+    } else {
+      userDoc.set({'attending': false});
+    }
+  }
   void startLoginFlow() {
     _loginState = ApplicationLoginState.emailAddress;
     notifyListeners();
@@ -290,4 +343,72 @@ class _GuestBookState extends State<GuestBook> {
       ],
     );
   }
+}
+
+
+enum Attending { yes, no, unknown }
+
+class YesNoSelection extends StatelessWidget {
+const YesNoSelection({@required this.state, @required this.onSelection});
+final Attending state;
+final void Function(Attending selection) onSelection;
+
+@override
+Widget build(BuildContext context) {
+  switch (state) {
+    case Attending.yes:
+      return Padding(
+        padding: EdgeInsets.all(8.0),
+        child: Row(
+          children: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(elevation: 0),
+              child: Text('YES'),
+              onPressed: () => onSelection(Attending.yes),
+            ),
+            SizedBox(width: 8),
+            TextButton(
+              child: Text('NO'),
+              onPressed: () => onSelection(Attending.no),
+            ),
+          ],
+        ),
+      );
+    case Attending.no:
+      return Padding(
+        padding: EdgeInsets.all(8.0),
+        child: Row(
+          children: [
+            TextButton(
+              child: Text('YES'),
+              onPressed: () => onSelection(Attending.yes),
+            ),
+            SizedBox(width: 8),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(elevation: 0),
+              child: Text('NO'),
+              onPressed: () => onSelection(Attending.no),
+            ),
+          ],
+        ),
+      );
+    default:
+      return Padding(
+        padding: EdgeInsets.all(8.0),
+        child: Row(
+          children: [
+            StyledButton(
+              child: Text('YES'),
+              onPressed: () => onSelection(Attending.yes),
+            ),
+            SizedBox(width: 8),
+            StyledButton(
+              child: Text('NO'),
+              onPressed: () => onSelection(Attending.no),
+            ),
+          ],
+        ),
+      );
+  }
+}
 }
